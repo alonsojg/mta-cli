@@ -28,9 +28,12 @@ struct Stop {
 struct Station {
     id: String,
     name: String,
+    #[allow(dead_code)]
     lat: f64,
+    #[allow(dead_code)]
     lon: f64,
     platforms: Vec<Platform>,
+    lines: Vec<String>,  // Add this to track which subway lines serve this station
 }
 
 #[derive(Debug, Clone)]
@@ -44,15 +47,19 @@ struct Platform {
 struct StationInfo {
     id: String,
     name: String,
-    platform_count: usize,  // Add this field
+    platform_count: usize,
+    lines: Vec<String>,  // Add this
 }
 
 #[derive(Debug)]
 struct Arrival {
     route: String,
+    #[allow(dead_code)]
     trip_id: String,
+    #[allow(dead_code)]
     stop_id: String,
     arrival_time: u64,
+    #[allow(dead_code)]
     departure_time: Option<u64>,
     // headsign: Option<String>,
 }
@@ -157,11 +164,12 @@ fn build_station_index(stops: &[Stop]) -> Vec<Station> {
                 lat: stop.stop_lat,
                 lon: stop.stop_lon,
                 platforms: Vec::new(),
+                lines: Vec::new(),  // Initialize empty lines vector
             });
         }
     }
     
-    // Second pass: add platforms to their parent stations
+    // Second pass: add platforms to their parent stations and collect line info
     for stop in stops {
         if stop.location_type != Some(1) {
             if let Some(parent_id) = &stop.parent_station {
@@ -180,15 +188,39 @@ fn build_station_index(stops: &[Stop]) -> Vec<Station> {
                         name: stop.stop_name.clone(),
                         direction,
                     });
+                    
+                    // Extract line from stop_id (first character often indicates line)
+                    // This is a simplified approach - you might need a more sophisticated mapping
+                    if let Some(first_char) = stop.stop_id.chars().next() {
+                        let line = match first_char {
+                            '1' | '2' | '3' | '4' | '5' | '6' | '7' => format!("{}", first_char),
+                            'A' | 'C' | 'E' => format!("{}", first_char),
+                            'B' | 'D' | 'F' | 'M' => format!("{}", first_char),
+                            'G' => "G".to_string(),
+                            'J' | 'Z' => format!("{}", first_char),
+                            'L' => "L".to_string(),
+                            'N' | 'Q' | 'R' | 'W' => format!("{}", first_char),
+                            'S' => "S".to_string(),
+                            _ => "?".to_string(),  // Question mark clearly shows it's unknown
+                        };
+                        
+                        if !station.lines.contains(&line) {
+                            station.lines.push(line);
+                        }
+                    }
                 }
             }
         }
     }
     
+    // Sort lines for each station
+    for station in station_map.values_mut() {
+        station.lines.sort();
+    }
+    
     station_map.into_values().collect()
 }
 
-// SIMPLE OWNED APPROACH - returns owned StationInfo, no lifetimes!
 fn search_stations(stations: &[Station], query: &str, limit: usize) -> Vec<StationInfo> {
     let matcher = SkimMatcherV2::default();
     let mut scored: Vec<(i64, StationInfo)> = stations
@@ -198,7 +230,8 @@ fn search_stations(stations: &[Station], query: &str, limit: usize) -> Vec<Stati
                 .map(|score| (score, StationInfo {
                     id: s.id.clone(),
                     name: s.name.clone(),
-                    platform_count: s.platforms.len(),  // This sets it
+                    platform_count: s.platforms.len(),
+                    lines: s.lines.clone(),  // Include lines
                 }))
         })
         .collect();
@@ -284,7 +317,7 @@ fn display_arrivals(arrivals: &[Arrival], station_name: &str, platform_name: &st
     table.set_titles(Row::new(vec![
         Cell::new("Route"),
         Cell::new("Arrival"),
-        Cell::new("Headsign"),
+        // Cell::new("Headsign"),
     ]));
     
     for arrival in arrivals {
@@ -326,7 +359,7 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
         println!("\n📋 Main Menu");
         let options = vec![
             "Search for a station",
-            "Browse stations by line",
+            // "Browse stations by line",
             "Exit",
         ];
         
@@ -349,8 +382,16 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
                     continue;
                 }
                 
+                // In interactive_mode, when showing search results:
                 let station_names: Vec<String> = matches.iter()
-                    .map(|s| format!("{} ({} platforms)", s.name, s.platform_count))
+                    .map(|s| {
+                        let lines_display = if s.lines.is_empty() {
+                            "".to_string()
+                        } else {
+                            format!(" [{}]", s.lines.join(", "))
+                        };
+                        format!("{}{} ({} platforms)", s.name, lines_display, s.platform_count)
+                    })
                     .collect();
                 
                 let station_idx = Select::new()
@@ -526,8 +567,16 @@ fn main() -> Result<()> {
                 let selected_info = if matches.len() == 1 && *yes {
                     &matches[0]
                 } else {
+                    // In the Arrivals command handler, when showing station selection:
                     let station_names: Vec<String> = matches.iter()
-                        .map(|s| format!("{} ({} platforms)", s.name, s.platform_count))
+                        .map(|s| {
+                            let lines_display = if s.lines.is_empty() {
+                                "".to_string()
+                            } else {
+                                format!(" [{}]", s.lines.join(", "))
+                            };
+                            format!("{}{} ({} platforms)", s.name, lines_display, s.platform_count)
+                        })
                         .collect();
                     
                     let idx = Select::new()
