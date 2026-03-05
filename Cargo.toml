@@ -1,7 +1,11 @@
 [package]
 name = "mta-cli"
-version = "0.1.0"
-edition = "2021"
+version = "1.0.0"
+edition = "2024"
+authors = ["Alonso J. Gutierrez Moran <alonsojgutierrez@outlook.com>"]
+description = "NYC MTA Subway real-time arrival tracker"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/alonsojg/mta-cli.git"
 
 [dependencies]
 gtfs-realtime = "0.2.0"
@@ -9,10 +13,16 @@ prost = "0.14.3"
 reqwest = { version = "0.13.2", features = ["blocking"] }
 anyhow = "1.0"
 chrono = "0.4"
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.0", features = ["derive","env"] }
 prettytable-rs = "0.10"
-csv = "1.3"           # For reading stops.csv
-serde = { version = "1.0", features = ["derive"] }  # For deserializing CSV
-fuzzy-matcher = "0.3" # For fuzzy station name matching
-dialoguer = "0.12.0"    # For interactive prompts
-indicatif = "0.18.4"    # For progress bars
+csv = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+fuzzy-matcher = "0.3"
+dialoguer = "0.12.0"
+indicatif = "0.18.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true  # Removes debug symbols, smaller binary
