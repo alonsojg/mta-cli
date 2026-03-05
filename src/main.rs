@@ -14,6 +14,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 
+// ==============================================
+// Data Structures
+// ==============================================
+
 #[derive(Debug, Deserialize, Clone)]
 struct Stop {
     stop_id: String,
@@ -28,12 +32,12 @@ struct Stop {
 struct Station {
     id: String,
     name: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for future "stations near me" feature
     lat: f64,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for future "stations near me" feature
     lon: f64,
     platforms: Vec<Platform>,
-    lines: Vec<String>,  // Add this to track which subway lines serve this station
+    lines: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,31 +52,34 @@ struct StationInfo {
     id: String,
     name: String,
     platform_count: usize,
-    lines: Vec<String>,  // Add this
+    lines: Vec<String>,
 }
 
 #[derive(Debug)]
 struct Arrival {
     route: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for future detailed views
     trip_id: String,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for future features
     stop_id: String,
     arrival_time: u64,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Reserved for future features
     departure_time: Option<u64>,
-    // headsign: Option<String>,
 }
 
-/// NYC MTA Subway Arrival CLI with interactive station selection
+// ==============================================
+// CLI Configuration
+// ==============================================
+
+/// NYC MTA Subway Arrival CLI - Real-time train arrivals for any station
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
     
-    /// Path to GTFS directory (default: ./gtfs_subway)
-    #[arg(short, long, default_value = "./gtfs_subway")]
+    /// Path to GTFS directory containing stops.csv
+    #[arg(short, long, default_value = "./gtfs_subway", env = "MTA_GTFS_PATH")]
     gtfs_path: PathBuf,
 }
 
@@ -83,17 +90,17 @@ enum Commands {
         /// Station name to search for (partial matches allowed)
         name: String,
         
-        /// Number of results to show
+        /// Maximum number of results to show
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
     
-    /// Show arrivals for a station (interactive)
+    /// Show arrivals for a station
     Arrivals {
-        /// Station name (if not provided, will prompt interactively)
+        /// Station name (interactive prompt if not provided)
         station: Option<String>,
         
-        /// Specific platform ID (if known)
+        /// Specific platform ID (if known, skips platform selection)
         #[arg(short, long)]
         platform: Option<String>,
         
@@ -105,14 +112,18 @@ enum Commands {
         #[arg(short, long, default_value_t = 10)]
         count: usize,
         
-        /// Non-interactive mode (must provide station)
+        /// Non-interactive mode (skips prompts, requires --station)
         #[arg(short, long)]
         yes: bool,
     },
     
-    /// Interactive mode with menus
+    /// Interactive mode with guided menus
     Interactive,
 }
+
+// ==============================================
+// Helper Types
+// ==============================================
 
 #[derive(Debug)]
 enum PlatformOrStop<'a> {
@@ -135,6 +146,10 @@ impl<'a> PlatformOrStop<'a> {
         }
     }
 }
+
+// ==============================================
+// Core Functions
+// ==============================================
 
 fn load_stops(gtfs_path: &PathBuf) -> Result<Vec<Stop>> {
     let stops_path = gtfs_path.join("stops.csv");
@@ -164,7 +179,7 @@ fn build_station_index(stops: &[Stop]) -> Vec<Station> {
                 lat: stop.stop_lat,
                 lon: stop.stop_lon,
                 platforms: Vec::new(),
-                lines: Vec::new(),  // Initialize empty lines vector
+                lines: Vec::new(),
             });
         }
     }
@@ -174,7 +189,7 @@ fn build_station_index(stops: &[Stop]) -> Vec<Station> {
         if stop.location_type != Some(1) {
             if let Some(parent_id) = &stop.parent_station {
                 if let Some(station) = station_map.get_mut(parent_id) {
-                    // Try to infer direction from platform name or ID
+                    // Infer direction from platform ID
                     let direction = if stop.stop_id.ends_with('N') {
                         Some("Northbound".to_string())
                     } else if stop.stop_id.ends_with('S') {
@@ -189,8 +204,7 @@ fn build_station_index(stops: &[Stop]) -> Vec<Station> {
                         direction,
                     });
                     
-                    // Extract line from stop_id (first character often indicates line)
-                    // This is a simplified approach - you might need a more sophisticated mapping
+                    // Extract line from stop_id first character
                     if let Some(first_char) = stop.stop_id.chars().next() {
                         let line = match first_char {
                             '1' | '2' | '3' | '4' | '5' | '6' | '7' => format!("{}", first_char),
@@ -201,7 +215,7 @@ fn build_station_index(stops: &[Stop]) -> Vec<Station> {
                             'L' => "L".to_string(),
                             'N' | 'Q' | 'R' | 'W' => format!("{}", first_char),
                             'S' => "S".to_string(),
-                            _ => "?".to_string(),  // Question mark clearly shows it's unknown
+                            _ => "?".to_string(), // Unknown line
                         };
                         
                         if !station.lines.contains(&line) {
@@ -213,7 +227,7 @@ fn build_station_index(stops: &[Stop]) -> Vec<Station> {
         }
     }
     
-    // Sort lines for each station
+    // Sort lines for consistent display
     for station in station_map.values_mut() {
         station.lines.sort();
     }
@@ -231,7 +245,7 @@ fn search_stations(stations: &[Station], query: &str, limit: usize) -> Vec<Stati
                     id: s.id.clone(),
                     name: s.name.clone(),
                     platform_count: s.platforms.len(),
-                    lines: s.lines.clone(),  // Include lines
+                    lines: s.lines.clone(),
                 }))
         })
         .collect();
@@ -250,7 +264,7 @@ fn get_feed_for_station(station_id: &str) -> &'static str {
         "L" => "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-l",
         "N" | "Q" | "R" | "W" => "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
         "S" => "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs",
-        _ => "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw",
+        _ => "https://api-endpoint.mta.info/Dataservice/mtagtfsfeeds/nyct%2Fgtfs-nqrw", // Default
     }
 }
 
@@ -274,17 +288,14 @@ fn fetch_arrivals(feed_url: &str, platform_id: &str, count: usize) -> Result<Vec
                 if stop_update.stop_id == Some(platform_id.to_string()) {
                     if let Some(arrival) = &stop_update.arrival {
                         if let Some(arrival_time) = arrival.time {
-                            // FIXED: Added & here to borrow instead of move
                             let trip = &trip_update.trip;
-
-                            // Then handle the optional fields inside it
+                            
                             arrivals.push(Arrival {
                                 route: trip.route_id.clone().unwrap_or_else(|| "Unknown".to_string()),
                                 trip_id: trip.trip_id.clone().unwrap_or_else(|| "Unknown".to_string()),
                                 stop_id: platform_id.to_string(),
                                 arrival_time: arrival_time as u64,
                                 departure_time: stop_update.departure.as_ref().and_then(|d| d.time).map(|t| t as u64),
-                                // headsign: trip.trip_headsign.clone(),
                             });
                         }
                     }
@@ -317,7 +328,6 @@ fn display_arrivals(arrivals: &[Arrival], station_name: &str, platform_name: &st
     table.set_titles(Row::new(vec![
         Cell::new("Route"),
         Cell::new("Arrival"),
-        // Cell::new("Headsign"),
     ]));
     
     for arrival in arrivals {
@@ -337,18 +347,21 @@ fn display_arrivals(arrivals: &[Arrival], station_name: &str, platform_name: &st
         table.add_row(Row::new(vec![
             Cell::new(&arrival.route),
             Cell::new(&arrival_display),
-            // Cell::new(arrival.headsign.as_deref().unwrap_or("--")),
         ]));
     }
     
     table.printstd();
 }
 
+// ==============================================
+// Interactive Mode
+// ==============================================
+
 fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
     println!("🚇 MTA Subway Arrival Tracker - Interactive Mode");
     println!("{}", "=".repeat(50));
     
-    // Load stations
+    // Load stations with progress indicator
     let spinner = ProgressBar::new_spinner();
     spinner.set_message("Loading station data...");
     let stops = load_stops(&gtfs_path)?;
@@ -358,9 +371,8 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
     loop {
         println!("\n📋 Main Menu");
         let options = vec![
-            "Search for a station",
-            // "Browse stations by line",
-            "Exit",
+            "🔍 Search for a station",
+            "👋 Exit",
         ];
         
         let selection = Select::new()
@@ -382,11 +394,11 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
                     continue;
                 }
                 
-                // In interactive_mode, when showing search results:
+                // Display stations with line information
                 let station_names: Vec<String> = matches.iter()
                     .map(|s| {
                         let lines_display = if s.lines.is_empty() {
-                            "".to_string()
+                            String::new()
                         } else {
                             format!(" [{}]", s.lines.join(", "))
                         };
@@ -405,14 +417,14 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
                 // Find the full station data
                 let station = stations.iter()
                     .find(|s| s.id == selected_info.id)
-                    .unwrap();
+                    .expect("Station should exist in index");
                 
                 if station.platforms.is_empty() {
                     println!("❌ No platforms found for this station");
                     continue;
                 }
                 
-                // Select platform
+                // Select platform/direction
                 let platform_names: Vec<String> = station.platforms.iter()
                     .map(|p| {
                         if let Some(dir) = &p.direction {
@@ -431,7 +443,7 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
                 
                 let platform = &station.platforms[platform_idx];
                 
-                // Get feed and fetch arrivals
+                // Fetch and display arrivals
                 let feed_url = get_feed_for_station(&platform.id);
                 
                 match fetch_arrivals(feed_url, &platform.id, 10) {
@@ -443,67 +455,8 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
                     }
                 }
             }
-            // 1 => {
-            //     // Browse all stations
-            //     println!("📚 All stations (sorted by name):");
-            //     let mut all_stations: Vec<&Station> = stations.iter().collect();
-            //     all_stations.sort_by(|a, b| a.name.cmp(&b.name));
-                
-            //     let station_names: Vec<String> = all_stations.iter()
-            //         .take(20)
-            //         .map(|s| format!("{} ({} platforms)", s.name, s.platforms.len()))
-            //         .collect();
-                
-            //     if station_names.is_empty() {
-            //         println!("No stations to display");
-            //         continue;
-            //     }
-                
-            //     let station_idx = Select::new()
-            //         .with_prompt("Select a station (showing first 20)")
-            //         .items(&station_names)
-            //         .interact_opt()?;
-                
-            //     if let Some(idx) = station_idx {
-            //         let station = all_stations[idx];
-                    
-            //         if station.platforms.is_empty() {
-            //             println!("❌ No platforms found for this station");
-            //             continue;
-            //         }
-                    
-            //         let platform_names: Vec<String> = station.platforms.iter()
-            //             .map(|p| {
-            //                 if let Some(dir) = &p.direction {
-            //                     format!("{} - {}", p.name, dir)
-            //                 } else {
-            //                     p.name.clone()
-            //                 }
-            //             })
-            //             .collect();
-                    
-            //         let platform_idx = Select::new()
-            //             .with_prompt("Select platform/direction")
-            //             .items(&platform_names)
-            //             .default(0)
-            //             .interact()?;
-                    
-            //         let platform = &station.platforms[platform_idx];
-                    
-            //         let feed_url = get_feed_for_station(&platform.id);
-                    
-            //         match fetch_arrivals(feed_url, &platform.id, 10) {
-            //             Ok(arrivals) => {
-            //                 display_arrivals(&arrivals, &station.name, &platform.name);
-            //             }
-            //             Err(e) => {
-            //                 println!("❌ Error fetching arrivals: {}", e);
-            //             }
-            //         }
-            //     }
-            // }
             1 => {
-                println!("👋 Goodbye!");
+                println!("👋 Thanks for using MTA Subway Tracker! Goodbye!");
                 break;
             }
             _ => unreachable!(),
@@ -514,12 +467,17 @@ fn interactive_mode(gtfs_path: PathBuf) -> Result<()> {
             .default(true)
             .interact()?
         {
+            println!("👋 Thanks for using MTA Subway Tracker! Goodbye!");
             break;
         }
     }
     
     Ok(())
 }
+
+// ==============================================
+// Main
+// ==============================================
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -537,7 +495,12 @@ fn main() -> Result<()> {
             
             println!("📋 Found {} matching stations:", matches.len());
             for (i, station) in matches.iter().enumerate() {
-                println!("{}. {} ({} platforms)", i + 1, station.name, station.platform_count);
+                let lines_display = if station.lines.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", station.lines.join(", "))
+                };
+                println!("{}. {}{} ({} platforms)", i + 1, station.name, lines_display, station.platform_count);
             }
         }
         
@@ -567,11 +530,10 @@ fn main() -> Result<()> {
                 let selected_info = if matches.len() == 1 && *yes {
                     &matches[0]
                 } else {
-                    // In the Arrivals command handler, when showing station selection:
                     let station_names: Vec<String> = matches.iter()
                         .map(|s| {
                             let lines_display = if s.lines.is_empty() {
-                                "".to_string()
+                                String::new()
                             } else {
                                 format!(" [{}]", s.lines.join(", "))
                             };
